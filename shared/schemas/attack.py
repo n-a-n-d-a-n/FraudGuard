@@ -29,6 +29,7 @@ class AttackParameters(BaseModel):
     amount_anomaly_z: Optional[float] = 0.0
     time_window_minutes: Optional[int] = 60
     merchant_novelty: Optional[bool] = False
+    shared_device: Optional[bool] = False # NEW: For MULE networks
 
 class Provenance(BaseModel):
     source: str = "manual"
@@ -66,5 +67,6 @@ SIGNAL_MAP = {
     "location_shift": "location_shift", 
     "amount_anomaly_z": "amount_anomaly",
     "merchant_novelty": "merchant_novelty",
-    "time_window_minutes": "rapid_transaction_window"
+    "time_window_minutes": "rapid_transaction_window",
+    "shared_device": "shared_device" # NEW
 }
