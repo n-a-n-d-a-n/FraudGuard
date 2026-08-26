@@ -7,7 +7,7 @@ def generate_baseline_transactions(rows: int, seed: int = 42) -> pd.DataFrame:
     np.random.seed(seed)
     
     # Generate synthetic customers and merchants
-    customer_ids = [f"C{str(i).zfill(5)}" for i in np.random.randint(1, 10001, rows)]
+    customer_ids = [f"C{str(i).zfill(5)}" for i in np.random.randint(1, 101, rows)]
     merchant_ids = [f"M{str(i).zfill(4)}" for i in np.random.randint(1, 501, rows)]
     
     # Generate realistic amounts (log-normal distribution)

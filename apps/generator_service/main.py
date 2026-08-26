@@ -71,18 +71,20 @@ async def generate_transactions(payload: EnvelopeRequest):
     else:
         df_legit = generate_baseline_transactions(rows=legit_rows_count, seed=req_data.seed)
     
+    # CRITICAL FIX: Extract the customer pool from the legit data!
+    existing_customers = df_legit["customer_id"].unique().tolist()
+    
     # 2. Generate Fraud Transactions (if requested)
     df_fraud = pd.DataFrame()
     if fraud_rows_count > 0 and req_data.attack_ids:
         fraud_dfs = []
-        # Split fraud rows equally among requested attack_ids
         rows_per_attack = fraud_rows_count // len(req_data.attack_ids)
         
         for i, attack_id in enumerate(req_data.attack_ids):
-            # Add remainder rows to the last attack
             rows = rows_per_attack + (fraud_rows_count % len(req_data.attack_ids) if i == len(req_data.attack_ids)-1 else 0)
             if rows > 0:
-                fraud_dfs.append(generate_attack_transactions(attack_id, rows=rows, seed=req_data.seed + i + 1))
+                # Pass the customer pool to the attack generator!
+                fraud_dfs.append(generate_attack_transactions(attack_id, rows=rows, seed=req_data.seed + i + 1, existing_customers=existing_customers))
                 
         if fraud_dfs:
             df_fraud = pd.concat(fraud_dfs).sample(frac=1, random_state=req_data.seed).reset_index(drop=True)

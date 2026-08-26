@@ -21,8 +21,7 @@ def fetch_attack_scenario(attack_id: str) -> dict:
         print(f"Warning: Could not fetch attack {attack_id} from threat_service. Error: {e}")
         return None
 
-def apply_attack_distortions(df: pd.DataFrame, scenario: dict) -> pd.DataFrame:
-    """Applies attack parameters to a baseline dataframe to create fraud signals."""
+def apply_attack_distortions(df: pd.DataFrame, scenario: dict, existing_customers: list) -> pd.DataFrame:
     if not scenario or "parameters" not in scenario:
         return df
         
@@ -33,48 +32,49 @@ def apply_attack_distortions(df: pd.DataFrame, scenario: dict) -> pd.DataFrame:
     df["is_fraud"] = True
     df["attack_id"] = attack_id
     
-    # 1. New Device
-    if params.get("new_device", False):
-        df["device_id"] = [f"DEV_{uuid4().hex[:8]}" for _ in range(len(df))]
+    # CRITICAL FIX: Use existing customers so fraud rows have prior history!
+    df["customer_id"] = np.random.choice(existing_customers, size=len(df))
+    
+    # 1. MULE/Shared Device Logic
+    if params.get("shared_device", False):
+        # Assign ONE device to all rows in this batch
+        shared_dev = f"DEV_SHARED_{uuid4().hex[:8]}"
+        df["device_id"] = shared_dev
         
-    # 2. Velocity Multiplier (compress timestamps to simulate rapid-fire transactions)
+    # 2. ATO/New Device Logic
+    elif params.get("new_device", False):
+        # Assign a new device to every row
+        df["device_id"] = [f"DEV_NEW_{uuid4().hex[:8]}" for _ in range(len(df))]
+        
+    # 3. Velocity Multiplier
     vel_mult = params.get("velocity_multiplier", 1)
     if vel_mult > 1:
-        # Compress the time window drastically
         time_delta = timedelta(minutes=30 / vel_mult)
         base_time = df["timestamp"].min()
         df["timestamp"] = [base_time + (time_delta * i) for i in range(len(df))]
         
-    # 3. Amount Anomaly (Z-score shift)
-    # ... inside apply_attack_distortions ...
+    # 4. Amount Anomaly
     amount_z = params.get("amount_anomaly_z", 0.0)
     if amount_z != 0.0:
         mean_amt = df["amount"].mean()
         std_amt = df["amount"].std()
         if std_amt > 0:
-            # Fix: Add random noise so amounts aren't identical
             df["amount"] = mean_amt + (amount_z * std_amt) + np.random.normal(0, std_amt * 0.15, size=len(df))
             
-    # 4. Merchant Novelty
+    # 5. Merchant Novelty
     if params.get("merchant_novelty", False):
         df["merchant_id"] = [f"M_UNKNOWN_{np.random.randint(1000, 1999)}" for _ in range(len(df))]
         
     return df
 
-def generate_attack_transactions(attack_id: str, rows: int, seed: int = 42) -> pd.DataFrame:
-    """Generates a batch of fraudulent transactions for a specific scenario."""
-    # Generate baseline first
-    df_baseline = pd.DataFrame() # In a real app, we'd sample from the legit baseline
-    
-    # For simplicity here, we generate a fresh small batch to distort
+def generate_attack_transactions(attack_id: str, rows: int, seed: int, existing_customers: list) -> pd.DataFrame:
     from apps.generator_service.generators.baseline import generate_baseline_transactions
     df_baseline = generate_baseline_transactions(rows=rows, seed=seed)
     
-    # Fetch scenario and distort
     scenario = fetch_attack_scenario(attack_id)
     if not scenario:
         raise ValueError(f"Attack scenario {attack_id} not found.")
         
-    df_fraud = apply_attack_distortions(df_baseline, scenario)
-    
+    # Pass existing_customers to the distorter!
+    df_fraud = apply_attack_distortions(df_baseline, scenario, existing_customers)
     return df_fraud
