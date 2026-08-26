@@ -87,12 +87,42 @@ from pydantic import BaseModel, Field, model_validator
 from typing import List, Optional, Any
 
 
-# --- Pydantic Data Models ---
+# ==============================================================================
+# BREAKING CHANGE NOTICE (Member 5 Integration):
+# The feature schema for /predict and /explain endpoints has been updated from 4 dummy fields
+# to all 12 canonical Member 3 feature service fields.
+# Member 5 must update their API request payload to send all 12 real feature fields.
+# ==============================================================================
+
+REAL_FEATURE_COLUMNS = [
+    "customer_txn_count_60m",
+    "customer_amount_mean_prior",
+    "amount_deviation_ratio",
+    "is_new_device",
+    "is_new_merchant",
+    "location_shift",
+    "customer_device_degree",
+    "customer_merchant_degree",
+    "device_customer_degree",
+    "merchant_customer_degree",
+    "shared_device_customer_count",
+    "relationship_risk_score",
+]
+
+
 class TransactionFeatures(BaseModel):
     customer_txn_count_60m: int = Field(..., description="Number of transactions in last 1 hour (0-20)")
+    customer_amount_mean_prior: float = Field(0.0, description="Customer mean transaction amount prior to this transaction")
     amount_deviation_ratio: float = Field(..., description="Z-score / ratio deviation from normal spending (-1 to 5)")
     is_new_device: int = Field(..., description="Indicator if transaction uses a new device (0 or 1)")
-    shared_device_account_count: int = Field(..., description="Count of other accounts sharing device (0-10)")
+    is_new_merchant: int = Field(0, description="Indicator if transaction uses a new merchant (0 or 1)")
+    location_shift: int = Field(0, description="Indicator if location shift detected (0 or 1)")
+    customer_device_degree: int = Field(0, description="Count of devices associated with customer")
+    customer_merchant_degree: int = Field(0, description="Count of merchants associated with customer")
+    device_customer_degree: int = Field(0, description="Count of customers associated with device")
+    merchant_customer_degree: int = Field(0, description="Count of customers associated with merchant")
+    shared_device_customer_count: int = Field(..., description="Count of other accounts sharing device (0-10)")
+    relationship_risk_score: float = Field(0.0, description="Graph-based relationship risk score (0.0 to 1.0)")
 
     @model_validator(mode="before")
     @classmethod
@@ -105,8 +135,15 @@ class TransactionFeatures(BaseModel):
                 mapped["amount_deviation_ratio"] = mapped["amount_deviation"]
             if "new_device" in mapped and "is_new_device" not in mapped:
                 mapped["is_new_device"] = mapped["new_device"]
-            if "shared_device_count" in mapped and "shared_device_account_count" not in mapped:
-                mapped["shared_device_account_count"] = mapped["shared_device_count"]
+            if "shared_device_count" in mapped and "shared_device_customer_count" not in mapped:
+                mapped["shared_device_customer_count"] = mapped["shared_device_count"]
+            if "shared_device_account_count" in mapped and "shared_device_customer_count" not in mapped:
+                mapped["shared_device_customer_count"] = mapped["shared_device_account_count"]
+            
+            # Cast bools to int if passed
+            for bool_col in ["is_new_device", "is_new_merchant", "location_shift"]:
+                if bool_col in mapped and isinstance(mapped[bool_col], bool):
+                    mapped[bool_col] = int(mapped[bool_col])
             return mapped
         return data
 
@@ -124,7 +161,7 @@ class TransactionFeatures(BaseModel):
 
     @property
     def shared_device_count(self) -> int:
-        return self.shared_device_account_count
+        return self.shared_device_customer_count
 
 
 class PredictRequest(BaseModel):
@@ -182,18 +219,40 @@ def health_check():
 def predict_fraud(payload: PredictRequest):
     """
     Predicts transaction fraud probability, risk score, and risk category.
-    Accepts Member 3 direct feature schema, Member 3 envelope payloads ('data'), and legacy field aliases.
+    Accepts Member 3 direct 12-feature schema, envelope payloads ('data'), and legacy aliases.
+
+    BREAKING CHANGE CONTRACT NOTICE:
+    Requires 12 real Member 3 feature fields:
+    customer_txn_count_60m, customer_amount_mean_prior, amount_deviation_ratio,
+    is_new_device, is_new_merchant, location_shift, customer_device_degree,
+    customer_merchant_degree, device_customer_degree, merchant_customer_degree,
+    shared_device_customer_count, relationship_risk_score.
     """
     if model is None:
         raise HTTPException(status_code=500, detail="Model is not loaded.")
 
     feats = payload.features
-    df_single = pd.DataFrame([{
+    feature_dict = {
         "customer_txn_count_60m": feats.customer_txn_count_60m,
+        "customer_amount_mean_prior": feats.customer_amount_mean_prior,
         "amount_deviation_ratio": feats.amount_deviation_ratio,
-        "is_new_device": feats.is_new_device,
-        "shared_device_account_count": feats.shared_device_account_count
-    }])[["customer_txn_count_60m", "amount_deviation_ratio", "is_new_device", "shared_device_account_count"]]
+        "is_new_device": int(feats.is_new_device),
+        "is_new_merchant": int(feats.is_new_merchant),
+        "location_shift": int(feats.location_shift),
+        "customer_device_degree": feats.customer_device_degree,
+        "customer_merchant_degree": feats.customer_merchant_degree,
+        "device_customer_degree": feats.device_customer_degree,
+        "merchant_customer_degree": feats.merchant_customer_degree,
+        "shared_device_customer_count": feats.shared_device_customer_count,
+        "relationship_risk_score": feats.relationship_risk_score,
+    }
+
+    df_single = pd.DataFrame([feature_dict])
+    if hasattr(model, "feature_names_in_"):
+        expected_cols = list(model.feature_names_in_)
+        df_single = df_single[expected_cols]
+    else:
+        df_single = df_single[REAL_FEATURE_COLUMNS]
 
     fraud_prob = float(model.predict_proba(df_single)[0, 1])
     prob_rounded = round(fraud_prob, 4)
@@ -271,31 +330,50 @@ def predict_via_feature_service(payload: FeatureServicePredictRequest):
 @app.get("/api/v1/model/explain/{transaction_id}", response_model=ExplainResponse)
 def explain_tx(
     transaction_id: str,
-    customer_txn_count_60m: Optional[int] = Query(None, description="Transactions in last hour (Member 3)"),
-    amount_deviation_ratio: Optional[float] = Query(None, description="Amount deviation ratio (Member 3)"),
-    is_new_device: Optional[int] = Query(None, description="New device indicator (Member 3)"),
-    shared_device_account_count: Optional[int] = Query(None, description="Shared device count (Member 3)"),
+    customer_txn_count_60m: Optional[int] = Query(None, description="Transactions in last 1 hour"),
+    customer_amount_mean_prior: Optional[float] = Query(None, description="Prior mean amount"),
+    amount_deviation_ratio: Optional[float] = Query(None, description="Amount deviation ratio"),
+    is_new_device: Optional[int] = Query(None, description="New device indicator"),
+    is_new_merchant: Optional[int] = Query(None, description="New merchant indicator"),
+    location_shift: Optional[int] = Query(None, description="Location shift indicator"),
+    customer_device_degree: Optional[int] = Query(None, description="Customer device degree"),
+    customer_merchant_degree: Optional[int] = Query(None, description="Customer merchant degree"),
+    device_customer_degree: Optional[int] = Query(None, description="Device customer degree"),
+    merchant_customer_degree: Optional[int] = Query(None, description="Merchant customer degree"),
+    shared_device_customer_count: Optional[int] = Query(None, description="Shared device count"),
+    relationship_risk_score: Optional[float] = Query(None, description="Relationship risk score"),
     velocity_1h: Optional[int] = Query(None, description="Legacy velocity_1h"),
     amount_deviation: Optional[float] = Query(None, description="Legacy amount_deviation"),
     new_device: Optional[int] = Query(None, description="Legacy new_device"),
     shared_device_count: Optional[int] = Query(None, description="Legacy shared_device_count")
 ):
     """
-    Computes SHAP feature attribution and explanations for a transaction specified by features.
+    Computes SHAP feature attribution and explanations for a transaction specified by 12 real features.
+
+    BREAKING CHANGE CONTRACT NOTICE:
+    Supports 12 real feature fields for Member 3 integration.
     """
     vel = customer_txn_count_60m if customer_txn_count_60m is not None else velocity_1h
     amt = amount_deviation_ratio if amount_deviation_ratio is not None else amount_deviation
     dev = is_new_device if is_new_device is not None else new_device
-    shd = shared_device_account_count if shared_device_account_count is not None else shared_device_account_count
+    shd = shared_device_customer_count if shared_device_customer_count is not None else shared_device_count
 
     if vel is None or amt is None or dev is None or shd is None:
         raise HTTPException(status_code=422, detail="Missing required transaction features for explanation.")
 
     feature_dict = {
         "customer_txn_count_60m": vel,
+        "customer_amount_mean_prior": customer_amount_mean_prior or 0.0,
         "amount_deviation_ratio": amt,
         "is_new_device": dev,
-        "shared_device_account_count": shd
+        "is_new_merchant": is_new_merchant or 0,
+        "location_shift": location_shift or 0,
+        "customer_device_degree": customer_device_degree or 0,
+        "customer_merchant_degree": customer_merchant_degree or 0,
+        "device_customer_degree": device_customer_degree or 0,
+        "merchant_customer_degree": merchant_customer_degree or 0,
+        "shared_device_customer_count": shd,
+        "relationship_risk_score": relationship_risk_score or 0.0,
     }
 
     try:

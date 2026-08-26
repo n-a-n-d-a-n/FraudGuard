@@ -134,7 +134,7 @@ def process_real_data_pipeline(parquet_path: str) -> pd.DataFrame:
 if __name__ == "__main__":
     # 1. Relative path to transactions.parquet from apps/model_service/ up to repo root's data folder
     relative_parquet_path = os.path.join(
-        "..", "..", "data", "fixtures", "DS_7b49892c", "transactions.parquet"
+        "..", "..", "data", "fixtures", "DS_91c85fbe", "transactions.parquet"
     )
     abs_parquet_path = os.path.abspath(os.path.join(CURRENT_DIR, relative_parquet_path))
 

@@ -61,10 +61,18 @@ mlflow ui
 ```json
 {
   "features": {
-    "customer_txn_count_60m": 8,
-    "amount_deviation_ratio": 3.0,
+    "customer_txn_count_60m": 0,
+    "customer_amount_mean_prior": 19.0,
+    "amount_deviation_ratio": 0.3,
     "is_new_device": 1,
-    "shared_device_account_count": 4
+    "is_new_merchant": 1,
+    "location_shift": 0,
+    "customer_device_degree": 1,
+    "customer_merchant_degree": 1,
+    "device_customer_degree": 11,
+    "merchant_customer_degree": 1,
+    "shared_device_customer_count": 10,
+    "relationship_risk_score": 0.49
   }
 }
 ```
@@ -74,8 +82,8 @@ mlflow ui
 **Response (`200 OK`):**
 ```json
 {
-  "fraud_probability": 1.0,
-  "risk_score": 100,
+  "fraud_probability": 0.9516,
+  "risk_score": 95,
   "prediction": "HIGH_RISK",
   "model_version": "logreg-1.0"
 }
@@ -114,7 +122,7 @@ mlflow ui
 ---
 
 ## 8. Dependencies & Team Handoff
-- **Upstream Dependency**: Member 3 (`fraudguard-member3` feature engineering service: supplies `customer_txn_count_60m`, `amount_deviation_ratio`, `is_new_device`, `shared_device_account_count`).
+- **Upstream Dependency**: Member 3 (`fraudguard-member3` feature engineering service: supplies canonical 12-feature schema).
 - **Downstream Handoffs**:
   - **Member 5** (Risk API Integration & Gateway Orchestration consuming `/api/v1/model/predict` and `/api/v1/model/explain/{transaction_id}`, joint threshold tuning).
   - **Member 6** (Metrics & Operational Monitoring consuming `/api/v1/health` and `/api/v1/model/info`, retraining feedback loop).
@@ -122,6 +130,28 @@ mlflow ui
 ---
 
 ## 9. Real Data Validation Findings
-The Fraud Detection ML module was evaluated against the real `DS_7b49892c` dataset using `real_data_pipeline.py`. Validation revealed that due to low repeat-customer and repeat-device density in that dataset (only 51 of 946 customers and 37 of 960 devices have repeat transactions), 12 of 12 behavioral and graph features showed no meaningful separation between fraudulent and legitimate classes. This represents an upstream data generation issue (Member 2) rather than a modeling deficiency. Consequently, the module continues to utilize synthetic dataset generation (`dummy_data.py`) for its active demo model until updated transaction fixtures are available.
+
+- **Upstream Dataset Escalation & Resolution**:
+  - The original fixture dataset (`DS_7b49892c`) lacked usable fraud signals due to low entity density (946 near-unique customers and no repeat-device graph structure).
+  - This issue was escalated to Member 2, who regenerated the fixture as `DS_91c85fbe`, incorporating realistic repeat-customer/repeat-device transaction histories and a deliberately injected shared-device pattern representing the `MULE_001` attack scenario.
+- **Pipeline Re-Validation**:
+  - Re-running `real_data_pipeline.py` confirmed that all 12 canonical Member 3 features now exhibit meaningful class separation between legitimate and fraudulent transactions.
+  - The strongest predictive signals emerged from graph and velocity metrics: `shared_device_customer_count`, `device_customer_degree`, and `relationship_risk_score`.
+- **Model Training & Registry Promotion**:
+  - The benchmarking pipeline ([train.py](train.py)) was retrained on this real dataset (`data/features_real.csv`, 1,000 rows, 800/200 train/test split across all 12 features) and registered to the MLflow Model Registry as version 3 under `"fraudguard360-detector"`.
+  - **Performance Metrics** (Test Set Evaluation at default 0.5 decision threshold):
+    - **ROC AUC**: `0.9817`
+    - **Precision (Fraud Class)**: `1.0000` (zero false positives)
+    - **Recall (Fraud Class)**: `0.4500`
+    - **Overall Accuracy**: `94.50%`
+- **Class Imbalance & Baseline Benchmarking**:
+  - A naive majority-class baseline (predicting 100% non-fraud) achieves 90.00% accuracy but yields `0.0000` Fraud Recall (0% fraud detection).
+  - The trained model's 94.50% accuracy reflects genuine fraud detection capability (F1 score `0.6207`), confirming performance is not an artifact of class imbalance.
+- **Decision Threshold Tuning Handoff**:
+  - The default `0.5` decision threshold is intentionally conservative (maximizing precision to eliminate false positives).
+  - Operating thresholds (`HIGH_RISK` >= 0.7, `MEDIUM_RISK` >= 0.4) are candidates for joint calibration with Member 5 based on operational cost tradeoffs between false positives and uncaught fraud.
+- **API Contract Migration Notice**:
+  - **Breaking Change**: The REST endpoints (`POST /api/v1/model/predict` and `GET /api/v1/model/explain/{transaction_id}`) now require the full 12-feature schema instead of the earlier 4-field provisional contract. Member 5 must update gateway payloads accordingly prior to production rollout.
+
 
 

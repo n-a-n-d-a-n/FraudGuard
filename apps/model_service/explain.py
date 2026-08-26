@@ -10,23 +10,34 @@ import xgboost as xgb
 import lightgbm as lgb
 
 MODEL_PATH = "models/best_model.joblib"
-DATA_PATH = "dummy_data/train_dummy.csv"
+DATA_PATH = "data/features_real.csv"
 
 # Global cached variables
 _model = None
 _explainer = None
-_feature_names = [
+REAL_FEATURE_COLUMNS = [
     "customer_txn_count_60m",
+    "customer_amount_mean_prior",
     "amount_deviation_ratio",
     "is_new_device",
-    "shared_device_account_count"
+    "is_new_merchant",
+    "location_shift",
+    "customer_device_degree",
+    "customer_merchant_degree",
+    "device_customer_degree",
+    "merchant_customer_degree",
+    "shared_device_customer_count",
+    "relationship_risk_score",
 ]
+
+_feature_names = REAL_FEATURE_COLUMNS
 
 LEGACY_FEATURE_MAPPING = {
     "velocity_1h": "customer_txn_count_60m",
     "amount_deviation": "amount_deviation_ratio",
     "new_device": "is_new_device",
-    "shared_device_count": "shared_device_account_count"
+    "shared_device_count": "shared_device_customer_count",
+    "shared_device_account_count": "shared_device_customer_count",
 }
 
 
@@ -38,7 +49,14 @@ def normalize_feature_dict(raw_dict: dict) -> dict:
     for key, val in raw_dict.items():
         canonical_key = LEGACY_FEATURE_MAPPING.get(key, key)
         normalized[canonical_key] = val
+
+    # Ensure all 12 feature columns are present
+    for col in REAL_FEATURE_COLUMNS:
+        if col not in normalized:
+            normalized[col] = 0.0 if ("score" in col or "prior" in col or "ratio" in col) else 0
+
     return normalized
+
 
 
 def unwrap_model(model_obj):

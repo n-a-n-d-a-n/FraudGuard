@@ -32,26 +32,42 @@ def sample_model():
 @pytest.fixture
 def fraud_sample_features():
     """
-    Sample feature dictionary using Member 3 canonical feature schema representing a high-risk transaction.
+    Sample feature dictionary using Member 3 canonical 12-feature schema representing a high-risk transaction.
     """
     return {
         "customer_txn_count_60m": 12,
+        "customer_amount_mean_prior": 150.0,
         "amount_deviation_ratio": 4.2,
         "is_new_device": 1,
-        "shared_device_account_count": 6
+        "is_new_merchant": 1,
+        "location_shift": 1,
+        "customer_device_degree": 4,
+        "customer_merchant_degree": 5,
+        "device_customer_degree": 6,
+        "merchant_customer_degree": 8,
+        "shared_device_customer_count": 6,
+        "relationship_risk_score": 0.85
     }
 
 
 @pytest.fixture
 def legit_sample_features():
     """
-    Sample feature dictionary using Member 3 canonical feature schema representing a normal transaction.
+    Sample feature dictionary using Member 3 canonical 12-feature schema representing a normal transaction.
     """
     return {
         "customer_txn_count_60m": 1,
+        "customer_amount_mean_prior": 50.0,
         "amount_deviation_ratio": 0.1,
         "is_new_device": 0,
-        "shared_device_account_count": 0
+        "is_new_merchant": 0,
+        "location_shift": 0,
+        "customer_device_degree": 1,
+        "customer_merchant_degree": 2,
+        "device_customer_degree": 1,
+        "merchant_customer_degree": 2,
+        "shared_device_customer_count": 0,
+        "relationship_risk_score": 0.05
     }
 
 
@@ -62,9 +78,17 @@ def legacy_fraud_sample_features():
     """
     return {
         "velocity_1h": 12,
+        "customer_amount_mean_prior": 150.0,
         "amount_deviation": 4.2,
         "new_device": 1,
-        "shared_device_count": 6
+        "is_new_merchant": 1,
+        "location_shift": 1,
+        "customer_device_degree": 4,
+        "customer_merchant_degree": 5,
+        "device_customer_degree": 6,
+        "merchant_customer_degree": 8,
+        "shared_device_count": 6,
+        "relationship_risk_score": 0.85
     }
 
 
@@ -227,7 +251,7 @@ def test_api_predict_via_feature_service_mock(client, fraud_sample_features, mon
 
 def test_api_predict_legacy_payload(client, legacy_fraud_sample_features):
     """
-    Verify POST /api/v1/model/predict with legacy feature names (velocity_1h, amount_deviation, etc.).
+    Verify POST /api/v1/model/predict with legacy feature names.
     """
     payload = {"features": legacy_fraud_sample_features}
     response = client.post("/api/v1/model/predict", json=payload)
@@ -255,7 +279,7 @@ def test_api_explain_success(client):
     Verify GET /api/v1/model/explain/{id} with valid query params returns 200 and expected keys.
     """
     tx_id = "TX_TEST_999"
-    url = f"/api/v1/model/explain/{tx_id}?customer_txn_count_60m=8&amount_deviation_ratio=3.0&is_new_device=1&shared_device_account_count=4"
+    url = f"/api/v1/model/explain/{tx_id}?customer_txn_count_60m=8&amount_deviation_ratio=3.0&is_new_device=1&shared_device_customer_count=4"
     response = client.get(url)
 
     assert response.status_code == 200
@@ -265,7 +289,8 @@ def test_api_explain_success(client):
     assert expected_keys.issubset(set(data.keys())), f"Missing keys in explain response: {expected_keys - set(data.keys())}"
     assert data["transaction_id"] == tx_id
     assert isinstance(data["top_factors"], list)
-    assert len(data["top_factors"]) == 4
+    assert len(data["top_factors"]) == 12
+
 
 
 # ==============================================================================
