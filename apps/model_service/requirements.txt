@@ -1,0 +1,14 @@
+scikit-learn
+xgboost
+lightgbm
+shap
+mlflow
+fastapi
+pydantic
+uvicorn
+joblib
+pandas
+numpy
+pytest
+opencv-python-headless
+httpx2
